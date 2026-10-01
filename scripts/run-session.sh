@@ -71,8 +71,37 @@ write_config() {
   fi
 }
 
+start_dashboard() {
+  local bind_host="${1:-0.0.0.0}"
+  local extra_env="${2:-}"
+
+  pkill -f "hermes dashboard" 2>/dev/null || true
+  sleep 1
+
+  log "Starting Hermes Dashboard on ${bind_host}:${DASHBOARD_PORT}..."
+
+  # shellcheck disable=SC2086
+  env $extra_env nohup hermes dashboard \
+    --host "$bind_host" \
+    --port "$DASHBOARD_PORT" \
+    --no-open \
+    > "$LOG_DIR/dashboard.log" 2>&1 &
+  DASH_PID=$!
+  log "Dashboard PID=$DASH_PID"
+
+  for i in $(seq 1 50); do
+    code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$DASHBOARD_PORT" || echo "000")
+    if echo "$code" | grep -qE '200|401|302|403'; then
+      log "Dashboard ready (HTTP $code)"
+      return 0
+    fi
+    sleep 1
+  done
+  log "WARN: Dashboard may not be fully ready yet (last HTTP $code)"
+}
+
 start_dashboard_and_tunnel() {
-  log "Starting Hermes Dashboard on port $DASHBOARD_PORT..."
+  log "Preparing dashboard extras..."
   if [ -d "$HERMES_HOME/hermes-agent" ]; then
     (
       cd "$HERMES_HOME/hermes-agent"
@@ -84,22 +113,9 @@ start_dashboard_and_tunnel() {
     )
   fi
 
-  pkill -f "hermes dashboard" 2>/dev/null || true
-  sleep 1
-
-  nohup hermes dashboard --host 127.0.0.1 --port "$DASHBOARD_PORT" --no-open \
-    > "$LOG_DIR/dashboard.log" 2>&1 &
-  DASH_PID=$!
-  log "Dashboard PID=$DASH_PID"
-
-  for i in $(seq 1 45); do
-    code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$DASHBOARD_PORT" || echo "000")
-    if echo "$code" | grep -qE '200|401|302|403'; then
-      log "Dashboard ready (HTTP $code)"
-      break
-    fi
-    sleep 1
-  done
+  # Bind 0.0.0.0 so Cloudflare Tunnel Host header is accepted.
+  # Basic Auth (from secrets) remains the access control.
+  start_dashboard "0.0.0.0"
 
   CLOUDFLARED="/tmp/cloudflared"
   if [ ! -x "$CLOUDFLARED" ]; then
@@ -117,7 +133,7 @@ start_dashboard_and_tunnel() {
   log "Tunnel PID=$TUNNEL_PID"
 
   TUNNEL_URL=""
-  for i in $(seq 1 35); do
+  for i in $(seq 1 40); do
     if [ -f "$LOG_DIR/tunnel.log" ] && grep -q "trycloudflare.com" "$LOG_DIR/tunnel.log"; then
       TUNNEL_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_DIR/tunnel.log" | head -1 || true)
       if [ -n "$TUNNEL_URL" ]; then
@@ -129,19 +145,41 @@ start_dashboard_and_tunnel() {
     sleep 1
   done
 
-  if [ -n "$TUNNEL_URL" ] && [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_ALLOWED_USERS:-}" ]; then
-    CHAT_ID=$(echo "$TELEGRAM_ALLOWED_USERS" | cut -d',' -f1 | tr -d ' ')
-    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-      --data-urlencode "chat_id=${CHAT_ID}" \
-      --data-urlencode "text=🚀 Hermes Lifetime is LIVE
+  if [ -n "$TUNNEL_URL" ]; then
+    # Extract hostname and re-start dashboard with explicit allowlist
+    # (works on versions that support HERMES_DASHBOARD_ALLOWED_HOSTS)
+    TUNNEL_HOST=$(echo "$TUNNEL_URL" | sed -E 's|https?://||' | cut -d/ -f1)
+    log "Setting allowed host: $TUNNEL_HOST"
+
+    export HERMES_DASHBOARD_ALLOWED_HOSTS="$TUNNEL_HOST,localhost,127.0.0.1"
+    export HERMES_DASHBOARD_PUBLIC_URL="$TUNNEL_URL"
+
+    # Also write into .env so child processes inherit
+    {
+      echo "HERMES_DASHBOARD_ALLOWED_HOSTS=${HERMES_DASHBOARD_ALLOWED_HOSTS}"
+      echo "HERMES_DASHBOARD_PUBLIC_URL=${HERMES_DASHBOARD_PUBLIC_URL}"
+    } >> "$HERMES_HOME/.env"
+
+    # Restart dashboard so the new env takes effect
+    start_dashboard "0.0.0.0" "HERMES_DASHBOARD_ALLOWED_HOSTS=${HERMES_DASHBOARD_ALLOWED_HOSTS} HERMES_DASHBOARD_PUBLIC_URL=${HERMES_DASHBOARD_PUBLIC_URL}"
+
+    if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_ALLOWED_USERS:-}" ]; then
+      CHAT_ID=$(echo "$TELEGRAM_ALLOWED_USERS" | cut -d',' -f1 | tr -d ' ')
+      curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+        --data-urlencode "chat_id=${CHAT_ID}" \
+        --data-urlencode "text=🚀 Hermes Lifetime is LIVE
 
 Dashboard:
 ${TUNNEL_URL}
 
+Login: admin / (password di secrets)
 Session ~5h50m
 _Nero Power_" \
-      -d "parse_mode=Markdown" >/dev/null 2>&1 || true
-    log "Telegram notification sent to $CHAT_ID"
+        -d "parse_mode=Markdown" >/dev/null 2>&1 || true
+      log "Telegram notification sent to $CHAT_ID"
+    fi
+  else
+    log "WARN: Could not extract tunnel URL"
   fi
 }
 
