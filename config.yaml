@@ -1,0 +1,235 @@
+database:
+  journal_mode: wal
+runtime:
+  nofile_soft_limit: 4096
+model:
+  default: gemini-2.5-flash-lite
+  provider: gemini
+  base_url: https://generativelanguage.googleapis.com/v1beta
+  alias: xkiro
+  providers:
+    xkiro:
+      base_url: https://xkiro.com/v1
+      api_key_env: XKIRO_API_KEY
+      models:
+        - id: qwen/qwen3.8-omni-flash:free
+          alias: xkiro
+    groq:
+      base_url: https://api.groq.com/openai/v1
+      api_key_env: GROQ_API_KEY
+      models:
+        - id: openai/gpt-oss-120b
+          alias: groq-oss
+        - id: openai/gpt-oss-20b
+          alias: groq-oss-20b
+        - id: qwen/qwen3.8-27b
+          alias: groq-qwen
+    aisub-minimax:
+      base_url: http://66.135.18.180:8080/v1
+      api_key_env: AISUBSCRIPTION_API_KEY
+      models:
+        - id: MiniMaxAI/MiniMax-M2.7
+          alias: aisub-minimax
+    aisub-qwen:
+      base_url: http://43.179.177.126:8000/v1
+      api_key_env: AISUBSCRIPTION_API_KEY
+      models:
+        - id: Qwen3.5-122B-A10B
+          alias: aisub-qwen
+    aisub-gemma:
+      base_url: http://36.137.226.29:8000/v1
+      api_key_env: AISUBSCRIPTION_API_KEY
+      models:
+        - id: gemma-4-31b-it
+          alias: aisub-gemma
+    miarouter:
+      base_url: https://miarouter.online/v1
+      api_key_env: MIAROUTER_API_KEY
+      models:
+        - id: claude-fable-5-1
+          alias: claude-fable-5-1
+        - id: claude-opus-5
+          alias: claude-opus-5
+        - id: claude-sonnet-5
+          alias: claude-sonnet-5
+        - id: gpt-6-astra
+          alias: gpt-6-astra
+        - id: kimi-k3
+          alias: kimi-k3
+  aliases:
+    xkiro:
+      model: qwen/qwen3.8-omni-flash:free
+      provider: custom
+      base_url: https://xkiro.com/v1
+    groq:
+      model: openai/gpt-oss-120b
+      provider: custom:groq
+      base_url: https://api.groq.com/openai/v1
+    groq-oss:
+      model: openai/gpt-oss-120b
+      provider: custom:groq
+      base_url: https://api.groq.com/openai/v1
+    groq-qwen:
+      model: qwen/qwen3.8-27b
+      provider: custom:groq
+      base_url: https://api.groq.com/openai/v1
+    aisub-minimax:
+      model: MiniMaxAI/MiniMax-M2.7
+      provider: custom:aisub-minimax
+      base_url: http://66.135.18.180:8080/v1
+      key_env: AISUBSCRIPTION_API_KEY
+    aisub-qwen:
+      model: Qwen3.5-122B-A10B
+      provider: custom:aisub-qwen
+      base_url: http://43.179.177.126:8000/v1
+      key_env: AISUBSCRIPTION_API_KEY
+    aisub-gemma:
+      model: gemma-4-31b-it
+      provider: custom:aisub-gemma
+      base_url: http://36.137.226.29:8000/v1
+      key_env: AISUBSCRIPTION_API_KEY
+  api_mode: chat_completions
+timeouts:
+  tools:
+    concurrent_batch: 420
+    sequential_call: 420
+terminal:
+  backend: local
+  cwd: .
+  timeout: 180
+  lifetime_seconds: 300
+  home_mode: auto
+tool_loop_guardrails:
+  warnings_enabled: true
+  hard_stop_enabled: false
+  non_interactive_hard_stop_enabled: true
+  warn_after:
+    exact_failure: 2
+    same_tool_failure: 3
+    idempotent_no_progress: 2
+  hard_stop_after:
+    exact_failure: 5
+    same_tool_failure: 8
+    idempotent_no_progress: 5
+compression:
+  enabled: true
+  threshold: 0.5
+  target_ratio: 0.2
+  protect_last_n: 20
+  protect_first_n: 3
+  max_attempts: 3
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200
+  user_char_limit: 1375
+  nudge_interval: 10
+group_sessions_per_user: true
+skills:
+  creation_nudge_interval: 15
+agent:
+  max_turns: 500
+  reasoning_effort: medium
+  fast_auto_seconds: 60
+gateway:
+  allow_all_users: false
+  multiplex_profiles: true
+  auto_multiplex_migration: true
+  scale_to_zero:
+    idle_timeout_minutes: 0
+    startup_watchdog: true
+    startup_watchdog_timeout_seconds: 300
+  loop_watchdog: true
+  write_sessions_json: true
+  trust_env: true
+  bot_loop_guard:
+    enabled: true
+    max_events: 20
+    window_seconds: 300
+    cooldown_seconds: 600
+platforms:
+  telegram:
+    enabled: true
+    home_channel:
+      platform: telegram
+      chat_id: '7699507804'
+      name: Azaroni Fidaroin
+      thread_id: '16881'
+      user_id: '7699507804'
+providers:
+  xkiro:
+    api: https://xkiro.com/v1
+    key_env: XKIRO_API_KEY
+  groq:
+    api: https://api.groq.com/openai/v1
+    key_env: GROQ_API_KEY
+    models:
+      - openai/gpt-oss-120b
+      - openai/gpt-oss-20b
+      - qwen/qwen3.8-27b
+  aisub-minimax:
+    api: http://66.135.18.180:8080/v1
+    key_env: AISUBSCRIPTION_API_KEY
+    models:
+      - MiniMaxAI/MiniMax-M2.7
+  aisub-qwen:
+    api: http://43.179.177.126:8000/v1
+    key_env: AISUBSCRIPTION_API_KEY
+    models:
+      - Qwen3.5-122B-A10B
+  aisub-gemma:
+    api: http://36.137.226.29:8000/v1
+    key_env: AISUBSCRIPTION_API_KEY
+    models:
+      - gemma-4-31b-it
+  miarouter:
+    api: https://miarouter.online/v1
+    key_env: MIAROUTER_API_KEY
+    models:
+      - claude-fable-5-1
+      - claude-opus-5
+      - claude-sonnet-5
+      - gpt-6-astra
+      - kimi-k3
+custom_providers:
+  - name: xkiro
+    base_url: https://xkiro.com/v1
+    key_env: XKIRO_API_KEY
+  - name: groq
+    base_url: https://api.groq.com/openai/v1
+    key_env: GROQ_API_KEY
+    models:
+      - openai/gpt-oss-120b
+      - openai/gpt-oss-20b
+      - qwen/qwen3.8-27b
+display:
+  tool_progress: all
+  show_reasoning: true
+  streaming: true
+stt:
+  enabled: true
+  language: en
+code_execution:
+  timeout: 300
+  max_tool_calls: 50
+_config_version: 49
+onboarding:
+  seen:
+    profile_build_offered: true
+    busy_input_prompt: true
+mcp_servers:
+  figma:
+    command: python3
+    args: ["${HERMES_HOME}/skills/figma-mcp/server.py"]
+    env:
+      FIGMA_PAT: ${FIGMA_PAT}
+  canva:
+    url: https://mcp.canva.com/mcp
+    auth: oauth
+    enabled: true
+auxiliary:
+  vision:
+    provider: ollama-cloud
+    model: gemma4:31b
+command_allowlist:
+  - pipe remote content to shell
