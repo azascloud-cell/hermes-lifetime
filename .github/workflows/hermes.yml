@@ -1,0 +1,69 @@
+name: Hermes Lifetime
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+concurrency:
+  group: hermes-lifetime
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  lifetime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Hermes state
+        id: cache-state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.hermes
+            !/~/.hermes/.env
+          key: hermes-state-${{ github.run_id }}
+          restore-keys: |
+            hermes-state-
+
+      - name: Bootstrap & Run Session (5h50m)
+        env:
+          XKIRO_API_KEY: ${{ secrets.XKIRO_API_KEY }}
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENCODE_ZEN_API_KEY: ${{ secrets.OPENCODE_ZEN_API_KEY }}
+          AISUBSCRIPTION_API_KEY: ${{ secrets.AISUBSCRIPTION_API_KEY }}
+          MIAROUTER_API_KEY: ${{ secrets.MIAROUTER_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALLOWED_USERS: ${{ secrets.TELEGRAM_ALLOWED_USERS }}
+          HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${{ secrets.HERMES_DASHBOARD_BASIC_AUTH_USERNAME }}
+          HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${{ secrets.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD }}
+          HERMES_DASHBOARD_BASIC_AUTH_SECRET: ${{ secrets.HERMES_DASHBOARD_BASIC_AUTH_SECRET }}
+          FIGMA_PAT: ${{ secrets.FIGMA_PAT }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL }}
+          OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL }}
+          DASHBOARD_PORT: "9119"
+        run: |
+          chmod +x scripts/run-session.sh
+          ./scripts/run-session.sh
+
+      - name: Trigger next session (lifetime loop)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Queuing next Hermes Lifetime session..."
+          sleep 10
+          gh workflow run "Hermes Lifetime" --repo "${{ github.repository }}" || \
+          gh workflow run hermes.yml --repo "${{ github.repository }}" || true
+          echo "Next session has been triggered."
