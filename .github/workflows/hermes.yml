@@ -22,18 +22,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cache Hermes state
-        id: cache-state
-        uses: actions/cache@v4
+      - name: Restore Hermes state (cache)
+        id: cache-restore
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.hermes
-            !/~/.hermes/.env
-          key: hermes-state-${{ github.run_id }}
+            hermes-backup
+          key: hermes-state-${{ github.repository }}-${{ github.run_id }}
           restore-keys: |
+            hermes-state-${{ github.repository }}-
             hermes-state-
 
-      - name: Bootstrap & Run Session (5h50m)
+      - name: Bootstrap & Run Session (5h50m + persist)
         env:
           XKIRO_API_KEY: ${{ secrets.XKIRO_API_KEY }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
@@ -53,9 +54,39 @@ jobs:
           GEMINI_BASE_URL: ${{ secrets.GEMINI_BASE_URL }}
           OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL }}
           DASHBOARD_PORT: "9119"
+          BACKUP_ROOT: ${{ github.workspace }}/hermes-backup
         run: |
-          chmod +x scripts/run-session.sh
+          chmod +x scripts/run-session.sh scripts/persist-hermes.sh
+          mkdir -p hermes-backup
           ./scripts/run-session.sh
+
+      - name: Final persist backup
+        if: always()
+        run: |
+          export HERMES_HOME="${HOME}/.hermes"
+          export BACKUP_ROOT="${{ github.workspace }}/hermes-backup"
+          if [ -x scripts/persist-hermes.sh ]; then
+            bash scripts/persist-hermes.sh backup || true
+            bash scripts/persist-hermes.sh status || true
+          fi
+
+      - name: Save Hermes state (cache)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.hermes
+            hermes-backup
+          key: hermes-state-${{ github.repository }}-${{ github.run_id }}
+
+      - name: Upload backup artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-backup-${{ github.run_id }}
+          path: hermes-backup/
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Trigger next session (lifetime loop)
         if: always()

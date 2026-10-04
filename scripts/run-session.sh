@@ -3,25 +3,37 @@ set -euo pipefail
 
 # ============================================
 # Nero | Hermes Lifetime Session Runner
+# + Persist identity / memory / sessions (SOUL, MEMORY, USER, state.db)
 # Optimized for GitHub Actions (5h50m + auto restart)
 # ============================================
 
 export HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+export BACKUP_ROOT="${BACKUP_ROOT:-${GITHUB_WORKSPACE:-.}/hermes-backup}"
 export PYTHONUNBUFFERED=1
 export DASHBOARD_PORT="${DASHBOARD_PORT:-9119}"
 export PATH="$HOME/.local/bin:$HOME/.hermes/bin:$PATH"
 
 SESSION_MINUTES=350
+BACKUP_EVERY_SEC=300
 LOG_DIR="/tmp/hermes-logs"
-mkdir -p "$LOG_DIR" "$HERMES_HOME"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+mkdir -p "$LOG_DIR" "$HERMES_HOME" "$BACKUP_ROOT"
 
-# Global PIDs (updated by start_* functions)
 DASH_PID=""
 TUNNEL_PID=""
 GATEWAY_PID=""
 CURRENT_TUNNEL_URL=""
+LAST_BACKUP_TS=0
 
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG_DIR/session.log"; }
+
+persist() {
+  if [ -x "$SCRIPT_DIR/persist-hermes.sh" ]; then
+    bash "$SCRIPT_DIR/persist-hermes.sh" "$@" 2>&1 | tee -a "$LOG_DIR/session.log" || true
+  else
+    log "WARN: persist-hermes.sh not found"
+  fi
+}
 
 install_hermes() {
   if command -v hermes >/dev/null 2>&1; then
@@ -85,22 +97,26 @@ write_env() {
 }
 
 write_config() {
+  # Only install repo config.yaml if Hermes does not already have one
+  # (restored state wins over repo template)
   if [ -f "config.yaml" ]; then
-    cp -f config.yaml "$HERMES_HOME/config.yaml"
-    log "config.yaml installed"
+    if [ ! -f "$HERMES_HOME/config.yaml" ]; then
+      cp -f config.yaml "$HERMES_HOME/config.yaml"
+      log "config.yaml installed (first time)"
+    else
+      log "config.yaml already present (kept from restore — not overwritten)"
+    fi
   else
     log "WARN: no config.yaml found in repo"
   fi
 }
 
-# Returns 0 if dashboard HTTP is responding
 dashboard_alive() {
   local code
   code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://127.0.0.1:$DASHBOARD_PORT" 2>/dev/null || echo "000")
   echo "$code" | grep -qE '200|401|302|403'
 }
 
-# Returns 0 if tunnel process is alive
 tunnel_alive() {
   [ -n "${TUNNEL_PID}" ] && kill -0 "$TUNNEL_PID" 2>/dev/null
 }
@@ -111,8 +127,6 @@ gateway_alive() {
 
 start_dashboard_only() {
   log "Starting Hermes Dashboard on 0.0.0.0:${DASHBOARD_PORT}..."
-
-  # Kill only dashboard, leave tunnel alone
   pkill -f "hermes dashboard" 2>/dev/null || true
   sleep 1
 
@@ -147,7 +161,6 @@ start_tunnel_only() {
     chmod +x "$CLOUDFLARED"
   fi
 
-  # Only kill existing tunnel if we are intentionally replacing it
   pkill -f cloudflared 2>/dev/null || true
   sleep 1
 
@@ -174,7 +187,6 @@ start_tunnel_only() {
           echo "HERMES_DASHBOARD_PUBLIC_URL=${HERMES_DASHBOARD_PUBLIC_URL}"
         } >> "$HERMES_HOME/.env"
 
-        # Restart dashboard once so allowlist takes effect (tunnel stays up)
         start_dashboard_only
         return 0
       fi
@@ -198,6 +210,7 @@ ${CURRENT_TUNNEL_URL}
 
 Login: admin / (password di secrets)
 Session ~5h50m
+Identity + memory restored.
 _Nero Power_" \
     -d "parse_mode=Markdown" >/dev/null 2>&1 || true
   log "Telegram notification sent to $CHAT_ID"
@@ -237,23 +250,55 @@ start_gateway() {
   log "Gateway is running"
 }
 
+maybe_backup() {
+  local now
+  now=$(date +%s)
+  if [ $((now - LAST_BACKUP_TS)) -ge "$BACKUP_EVERY_SEC" ]; then
+    persist backup
+    LAST_BACKUP_TS=$now
+  fi
+}
+
+cleanup() {
+  log "Cleanup — final backup of identity/memory/sessions..."
+  persist backup
+  pkill -f "hermes gateway" 2>/dev/null || true
+  pkill -f "hermes dashboard" 2>/dev/null || true
+  pkill -f cloudflared 2>/dev/null || true
+  log "=== Session END (state saved) ==="
+}
+trap cleanup EXIT INT TERM
+
 main() {
   log "=== Nero Hermes Lifetime Session START ==="
   log "Runner: $(uname -a)"
   log "Free RAM: $(free -h | awk '/Mem:/{print $7}')"
 
+  # 1) Restore identity + memory + sessions FIRST (before install overwrites anything)
+  persist restore
+  persist status
+
   install_hermes
   write_env
   write_config
 
+  # Re-assert identity after install (installer must not wipe SOUL)
+  if [ ! -s "$HERMES_HOME/SOUL.md" ]; then
+    persist restore
+  fi
+
   start_dashboard_and_tunnel
   start_gateway
+
+  # Initial backup right after healthy start
+  persist backup
+  LAST_BACKUP_TS=$(date +%s)
 
   END_TIME=$(( $(date +%s) + SESSION_MINUTES * 60 ))
   log "Session will end around $(date -d "@$END_TIME" 2>/dev/null || date) (${SESSION_MINUTES} minutes)"
   log "Stable tunnel URL: ${CURRENT_TUNNEL_URL:-none}"
+  log "Persist: backup every ${BACKUP_EVERY_SEC}s + final on exit"
 
-  # Health loop — prefer HTTP check over PID (hermes may re-exec / use workers)
   while [ $(date +%s) -lt $END_TIME ]; do
     sleep 90
 
@@ -272,13 +317,11 @@ main() {
       start_tunnel_only
       notify_telegram
     fi
+
+    maybe_backup
   done
 
-  log "Session time reached. Cleaning up..."
-  pkill -f "hermes gateway" 2>/dev/null || true
-  pkill -f "hermes dashboard" 2>/dev/null || true
-  pkill -f cloudflared 2>/dev/null || true
-  log "=== Session END ==="
+  log "Session time reached."
 }
 
 main
