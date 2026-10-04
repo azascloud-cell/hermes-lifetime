@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # Nero | Hermes GHA Persist
-# Backup & Restore SOUL.md, MEMORY, USER, state.db, skills
+# Backup & Restore SOUL.md, MEMORY, USER, state.db, skills, .env
 # ============================================================
 set -euo pipefail
 
@@ -22,18 +22,17 @@ restore() {
 
   if [ -d "$BACKUP_ROOT/hermes" ] && [ "$(ls -A "$BACKUP_ROOT/hermes" 2>/dev/null)" ]; then
     rsync -a \
-      --exclude='*.tmp' --exclude='*.lock' --exclude='.env' \
+      --exclude='*.tmp' --exclude='*.lock' \
       "$BACKUP_ROOT/hermes/" "$HERMES_HOME/" || true
-    log "Full tree restored"
+    log "Full tree restored (including .env if present)"
   else
-    for f in SOUL.md config.yaml state.db state.db-wal state.db-shm; do
+    for f in SOUL.md config.yaml .env state.db state.db-wal state.db-shm; do
       [ -f "$BACKUP_ROOT/$f" ] && cp -a "$BACKUP_ROOT/$f" "$HERMES_HOME/$f" && log "Restored $f" || true
     done
     [ -d "$BACKUP_ROOT/memories" ] && rsync -a "$BACKUP_ROOT/memories/" "$HERMES_HOME/memories/" && log "Restored memories/" || true
     [ -d "$BACKUP_ROOT/skills" ] && rsync -a "$BACKUP_ROOT/skills/" "$HERMES_HOME/skills/" && log "Restored skills/" || true
   fi
 
-  # Identity safety net
   if [ ! -s "$HERMES_HOME/SOUL.md" ]; then
     log "WARNING: SOUL.md missing — writing minimal identity"
     cat > "$HERMES_HOME/SOUL.md" << 'SOUL'
@@ -57,6 +56,13 @@ SOUL
     echo "--- SOUL.md (first 8 lines) ---"
     head -8 "$HERMES_HOME/SOUL.md"
   fi
+  if [ -f "$HERMES_HOME/.env" ]; then
+    echo "--- .env keys present ---"
+    grep -E '^[A-Z0-9_]+=' "$HERMES_HOME/.env" | cut -d= -f1 | tr '\n' ' '
+    echo
+  else
+    echo "--- .env: missing ---"
+  fi
 }
 
 backup() {
@@ -69,10 +75,10 @@ backup() {
 
   mkdir -p "$BACKUP_ROOT/hermes"
   rsync -a \
-    --exclude='*.tmp' --exclude='*.lock' --exclude='cache/' --exclude='__pycache__/' --exclude='.env' \
+    --exclude='*.tmp' --exclude='*.lock' --exclude='cache/' --exclude='__pycache__/' \
     "$HERMES_HOME/" "$BACKUP_ROOT/hermes/" || true
 
-  for f in SOUL.md config.yaml state.db state.db-wal state.db-shm; do
+  for f in SOUL.md config.yaml .env state.db state.db-wal state.db-shm; do
     [ -f "$HERMES_HOME/$f" ] && cp -a "$HERMES_HOME/$f" "$BACKUP_ROOT/" || true
   done
   [ -d "$HERMES_HOME/memories" ] && rsync -a "$HERMES_HOME/memories/" "$BACKUP_ROOT/memories/" || true
@@ -96,6 +102,13 @@ status() {
   echo
   echo "-- memories --"
   ls -la "$HERMES_HOME/memories/" 2>/dev/null || echo "(none)"
+  echo
+  echo "-- .env keys --"
+  if [ -f "$HERMES_HOME/.env" ]; then
+    grep -E '^[A-Z0-9_]+=' "$HERMES_HOME/.env" | cut -d= -f1
+  else
+    echo "(no .env)"
+  fi
   echo
   echo "-- state.db --"
   if [ -f "$HERMES_HOME/state.db" ]; then
