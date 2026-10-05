@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge canonical model.providers into live ~/.hermes/config.yaml without wiping other settings."""
+"""Force-register all providers with base_url into live config. Runs every session start."""
 import os, sys, pathlib
 try:
     import yaml
@@ -10,9 +10,8 @@ except ImportError:
 
 HERMES_HOME = pathlib.Path(os.environ.get("HERMES_HOME", pathlib.Path.home() / ".hermes"))
 LIVE = HERMES_HOME / "config.yaml"
-REPO = pathlib.Path(os.environ.get("GITHUB_WORKSPACE", ".")) / "config.yaml"
 
-CANONICAL_PROVIDERS = {
+PROVIDERS = {
     "ollama-cloud": {
         "base_url": "https://ollama.com/v1",
         "api_key_env": "OLLAMA_API_KEY",
@@ -70,40 +69,26 @@ CANONICAL_PROVIDERS = {
 def main():
     if LIVE.exists():
         data = yaml.safe_load(LIVE.read_text()) or {}
-        bak = LIVE.with_suffix(".yaml.bak.merge")
-        bak.write_text(LIVE.read_text())
-        print(f"backup -> {bak}")
-    elif REPO.exists():
-        data = yaml.safe_load(REPO.read_text()) or {}
-        print("seeded from repo config.yaml")
     else:
         data = {}
-        print("starting empty config")
+        print("no live config — creating")
 
     model = data.setdefault("model", {})
-    providers = model.setdefault("providers", {})
-
-    for name, conf in CANONICAL_PROVIDERS.items():
-        existing = providers.get(name) or {}
-        if not isinstance(existing, dict):
-            existing = {}
-        merged = {**conf, **{k: v for k, v in existing.items() if k not in ("base_url", "api_key_env") or v}}
-        merged["base_url"] = conf["base_url"]
-        merged["api_key_env"] = conf["api_key_env"]
-        if "models" in conf and "models" not in existing:
-            merged["models"] = conf["models"]
-        providers[name] = merged
-        print(f"OK {name}: {merged['base_url']}")
+    model["providers"] = dict(PROVIDERS)
+    model.setdefault("default", "gemma4:31b")
+    model.setdefault("provider", "ollama-cloud")
+    model.setdefault("api_mode", "chat_completions")
 
     LIVE.parent.mkdir(parents=True, exist_ok=True)
     LIVE.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False))
 
     check = yaml.safe_load(LIVE.read_text())
-    keys = list(check.get("model", {}).get("providers", {}).keys())
-    print("Providers in live config:", keys)
-    assert "miarouter" in keys
-    assert "aisub-gemma" in keys
-    print("DONE")
+    keys = list(check["model"]["providers"].keys())
+    print("Providers registered:", keys)
+    for k, v in check["model"]["providers"].items():
+        print(f"  {k}: {v.get('base_url')} key_env={v.get('api_key_env')}")
+    assert "miarouter" in keys and "aisub-gemma" in keys
+    print("DONE — providers forced")
 
 if __name__ == "__main__":
     main()
