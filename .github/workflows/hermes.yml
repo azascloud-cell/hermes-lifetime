@@ -18,45 +18,69 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 350
 
+    env:
+      # Private state store (memory, session, .env, SOUL)
+      STATE_REPO: azascloud-cell/model-hermes
+      STATE_BRANCH: main
+
     steps:
-      - name: Checkout main
+      - name: Checkout public runner repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Restore Hermes state from branch hermes-state
+      - name: Restore state from private repo (model-hermes)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATE_REPO_TOKEN: ${{ secrets.STATE_REPO_TOKEN }}
         run: |
           set -e
           mkdir -p "$HOME/.hermes" hermes-backup
-          git fetch origin hermes-state:hermes-state 2>/dev/null || true
-          if git show-ref --verify --quiet refs/heads/hermes-state || git show-ref --verify --quiet refs/remotes/origin/hermes-state; then
-            echo "Found hermes-state branch — extracting..."
-            git archive origin/hermes-state 2>/dev/null | tar -x -C hermes-backup/ 2>/dev/null || \
-            git checkout hermes-state -- . 2>/dev/null || true
-            if [ -d hermes-backup/.hermes ]; then
-              rsync -a hermes-backup/.hermes/ "$HOME/.hermes/" || true
-            elif [ -d hermes-backup/hermes ]; then
-              rsync -a hermes-backup/hermes/ "$HOME/.hermes/" || true
-            else
-              for f in SOUL.md config.yaml state.db state.db-wal state.db-shm; do
-                [ -f "hermes-backup/$f" ] && cp -a "hermes-backup/$f" "$HOME/.hermes/" || true
-              done
-              [ -d hermes-backup/memories ] && rsync -a hermes-backup/memories/ "$HOME/.hermes/memories/" || true
-              [ -d hermes-backup/skills ] && rsync -a hermes-backup/skills/ "$HOME/.hermes/skills/" || true
-            fi
-            echo "Restored from hermes-state branch"
-            ls -la "$HOME/.hermes" || true
-            ls -la "$HOME/.hermes/memories" 2>/dev/null || true
-            [ -f "$HOME/.hermes/SOUL.md" ] && head -5 "$HOME/.hermes/SOUL.md" || echo "NO SOUL.md"
+
+          if [ -z "${STATE_REPO_TOKEN:-}" ]; then
+            echo "WARNING: STATE_REPO_TOKEN secret missing — cannot restore from private repo"
+            echo "Add secret STATE_REPO_TOKEN (PAT with repo scope) in this public repo."
           else
-            echo "No hermes-state branch yet (first run)"
+            STAGE="${{ github.workspace }}/state-pull"
+            rm -rf "$STAGE"
+            echo "Cloning private state repo ${STATE_REPO}..."
+            git clone --depth 1 --branch "${STATE_BRANCH}" \
+              "https://x-access-token:${STATE_REPO_TOKEN}@github.com/${STATE_REPO}.git" \
+              "$STAGE" 2>/dev/null || \
+            git clone --depth 1 \
+              "https://x-access-token:${STATE_REPO_TOKEN}@github.com/${STATE_REPO}.git" \
+              "$STAGE" 2>/dev/null || true
+
+            if [ -d "$STAGE" ]; then
+              if [ -d "$STAGE/.hermes" ]; then
+                rsync -a "$STAGE/.hermes/" "$HOME/.hermes/" || true
+              else
+                # flat layout support
+                for f in SOUL.md config.yaml .env state.db state.db-wal state.db-shm; do
+                  [ -f "$STAGE/$f" ] && cp -a "$STAGE/$f" "$HOME/.hermes/" || true
+                done
+                [ -d "$STAGE/memories" ] && rsync -a "$STAGE/memories/" "$HOME/.hermes/memories/" || true
+                [ -d "$STAGE/skills" ] && rsync -a "$STAGE/skills/" "$HOME/.hermes/skills/" || true
+              fi
+              echo "Restored from private repo ${STATE_REPO}"
+              ls -la "$HOME/.hermes" || true
+              ls -la "$HOME/.hermes/memories" 2>/dev/null || true
+              if [ -f "$HOME/.hermes/.env" ]; then
+                echo "--- .env keys present ---"
+                grep -E '^[A-Z0-9_]+=' "$HOME/.hermes/.env" | cut -d= -f1 | tr '\n' ' '
+                echo
+              else
+                echo "--- .env: missing after restore ---"
+              fi
+              [ -f "$HOME/.hermes/SOUL.md" ] && { echo "--- SOUL.md ---"; head -5 "$HOME/.hermes/SOUL.md"; } || echo "NO SOUL.md"
+            else
+              echo "Private repo empty or clone failed (first run is OK)"
+            fi
           fi
-          # Seed SOUL from repo if still missing
+
+          # Seed SOUL from public repo if still missing
           if [ ! -s "$HOME/.hermes/SOUL.md" ] && [ -f SOUL.md ]; then
             cp SOUL.md "$HOME/.hermes/SOUL.md"
-            echo "Seeded SOUL.md from repo"
+            echo "Seeded SOUL.md from public repo"
           fi
 
       - name: Cache fallback restore
@@ -96,7 +120,6 @@ jobs:
           mkdir -p hermes-backup "$HOME/.hermes"
           export HERMES_HOME="$HOME/.hermes"
           export BACKUP_ROOT="${{ github.workspace }}/hermes-backup"
-          # Force all providers with base_url BEFORE gateway starts
           python3 scripts/merge_providers.py || true
           ./scripts/run-session.sh
 
@@ -108,35 +131,62 @@ jobs:
           bash scripts/persist-hermes.sh backup || true
           bash scripts/persist-hermes.sh status || true
 
-      - name: Push state to hermes-state branch (durable)
+      - name: Push full state to private repo (incl .env)
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATE_REPO_TOKEN: ${{ secrets.STATE_REPO_TOKEN }}
         run: |
           set -e
-          export HERMES_HOME="$HOME/.hermes"
-          STAGE="${{ github.workspace }}/state-stage"
-          rm -rf "$STAGE"
-          mkdir -p "$STAGE/.hermes"
-          # NEVER commit .env — repo is public. Keys must be in GitHub Secrets.
-          rsync -a --exclude='cache/' --exclude='__pycache__/' --exclude='*.tmp' --exclude='*.lock' --exclude='.env' \
-            "$HERMES_HOME/" "$STAGE/.hermes/" 2>/dev/null || true
-          if [ -f "$HERMES_HOME/.env" ]; then
-            grep -E '^[A-Z0-9_]+=' "$HERMES_HOME/.env" | cut -d= -f1 > "$STAGE/.hermes/KEY_NAMES.txt" || true
+          if [ -z "${STATE_REPO_TOKEN:-}" ]; then
+            echo "ERROR: STATE_REPO_TOKEN missing — state NOT saved to private repo"
+            exit 0
           fi
+
+          export HERMES_HOME="$HOME/.hermes"
+          STAGE="${{ github.workspace }}/state-push"
+          rm -rf "$STAGE"
+
+          git clone --depth 1 \
+            "https://x-access-token:${STATE_REPO_TOKEN}@github.com/${STATE_REPO}.git" \
+            "$STAGE" 2>/dev/null || {
+              mkdir -p "$STAGE"
+              cd "$STAGE"
+              git init -q
+              git remote add origin "https://x-access-token:${STATE_REPO_TOKEN}@github.com/${STATE_REPO}.git"
+            }
+
           cd "$STAGE"
-          git init -q
           git config user.email "hermes-lifetime[bot]@users.noreply.github.com"
           git config user.name "Hermes Lifetime Bot"
-          git checkout -b hermes-state
+          git checkout -B "${STATE_BRANCH}" 2>/dev/null || git checkout -b "${STATE_BRANCH}"
+
+          mkdir -p .hermes
+          # Full state INCLUDING .env (private repo — safe)
+          rsync -a --delete \
+            --exclude='cache/' --exclude='__pycache__/' --exclude='*.tmp' --exclude='*.lock' \
+            "$HERMES_HOME/" .hermes/ 2>/dev/null || true
+
+          # README so repo is not empty-looking
+          cat > README.md << 'EOF'
+          # Hermes private state store
+
+          Auto-updated by hermes-lifetime (public runner).
+          Contains SOUL, MEMORY, USER, state.db, config, .env — do not make public.
+          EOF
+
           git add -A
           if git diff --cached --quiet; then
-            echo "Nothing to commit"
+            echo "Nothing new to commit"
           else
-            git commit -m "state snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ) run=${{ github.run_id }}"
-            git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-            git push -f origin hermes-state
-            echo "Pushed hermes-state branch successfully"
+            git commit -m "state $(date -u +%Y-%m-%dT%H:%M:%SZ) run=${{ github.run_id }}"
+            git push -u origin "${STATE_BRANCH}" --force
+            echo "Pushed full state (incl .env) to ${STATE_REPO}"
+          fi
+
+          # Show what keys were saved (names only)
+          if [ -f .hermes/.env ]; then
+            echo "Saved .env keys:"
+            grep -E '^[A-Z0-9_]+=' .hermes/.env | cut -d= -f1
           fi
 
       - name: Save cache (secondary)
