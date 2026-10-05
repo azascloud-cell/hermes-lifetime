@@ -3,7 +3,7 @@ name: Hermes Lifetime
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '50 */5 * * *'
 
 concurrency:
   group: hermes-lifetime
@@ -16,14 +16,50 @@ permissions:
 jobs:
   lifetime:
     runs-on: ubuntu-latest
-    timeout-minutes: 355
+    timeout-minutes: 350
 
     steps:
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Restore Hermes state (cache)
-        id: cache-restore
+      - name: Restore Hermes state from branch hermes-state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          mkdir -p "$HOME/.hermes" hermes-backup
+          git fetch origin hermes-state:hermes-state 2>/dev/null || true
+          if git show-ref --verify --quiet refs/heads/hermes-state || git show-ref --verify --quiet refs/remotes/origin/hermes-state; then
+            echo "Found hermes-state branch — extracting..."
+            git archive origin/hermes-state 2>/dev/null | tar -x -C hermes-backup/ 2>/dev/null || \
+            git checkout hermes-state -- . 2>/dev/null || true
+            if [ -d hermes-backup/.hermes ]; then
+              rsync -a hermes-backup/.hermes/ "$HOME/.hermes/" || true
+            elif [ -d hermes-backup/hermes ]; then
+              rsync -a hermes-backup/hermes/ "$HOME/.hermes/" || true
+            else
+              for f in SOUL.md config.yaml state.db state.db-wal state.db-shm; do
+                [ -f "hermes-backup/$f" ] && cp -a "hermes-backup/$f" "$HOME/.hermes/" || true
+              done
+              [ -d hermes-backup/memories ] && rsync -a hermes-backup/memories/ "$HOME/.hermes/memories/" || true
+              [ -d hermes-backup/skills ] && rsync -a hermes-backup/skills/ "$HOME/.hermes/skills/" || true
+            fi
+            echo "Restored from hermes-state branch"
+            ls -la "$HOME/.hermes" || true
+            ls -la "$HOME/.hermes/memories" 2>/dev/null || true
+            [ -f "$HOME/.hermes/SOUL.md" ] && head -5 "$HOME/.hermes/SOUL.md" || echo "NO SOUL.md"
+          else
+            echo "No hermes-state branch yet (first run)"
+          fi
+          # Seed SOUL from repo if still missing
+          if [ ! -s "$HOME/.hermes/SOUL.md" ] && [ -f SOUL.md ]; then
+            cp SOUL.md "$HOME/.hermes/SOUL.md"
+            echo "Seeded SOUL.md from repo"
+          fi
+
+      - name: Cache fallback restore
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -34,7 +70,7 @@ jobs:
             hermes-state-${{ github.repository }}-
             hermes-state-
 
-      - name: Bootstrap & Run Session (5h50m + persist)
+      - name: Bootstrap & Run Session
         env:
           XKIRO_API_KEY: ${{ secrets.XKIRO_API_KEY }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
@@ -56,21 +92,54 @@ jobs:
           DASHBOARD_PORT: "9119"
           BACKUP_ROOT: ${{ github.workspace }}/hermes-backup
         run: |
-          chmod +x scripts/run-session.sh scripts/persist-hermes.sh
-          mkdir -p hermes-backup
+          chmod +x scripts/*.sh scripts/*.py 2>/dev/null || true
+          mkdir -p hermes-backup "$HOME/.hermes"
+          export HERMES_HOME="$HOME/.hermes"
+          export BACKUP_ROOT="${{ github.workspace }}/hermes-backup"
+          # Force all providers with base_url BEFORE gateway starts
+          python3 scripts/merge_providers.py || true
           ./scripts/run-session.sh
 
-      - name: Final persist backup
+      - name: Final backup to disk
         if: always()
         run: |
-          export HERMES_HOME="${HOME}/.hermes"
+          export HERMES_HOME="$HOME/.hermes"
           export BACKUP_ROOT="${{ github.workspace }}/hermes-backup"
-          if [ -x scripts/persist-hermes.sh ]; then
-            bash scripts/persist-hermes.sh backup || true
-            bash scripts/persist-hermes.sh status || true
+          bash scripts/persist-hermes.sh backup || true
+          bash scripts/persist-hermes.sh status || true
+
+      - name: Push state to hermes-state branch (durable)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          export HERMES_HOME="$HOME/.hermes"
+          STAGE="${{ github.workspace }}/state-stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/.hermes"
+          # NEVER commit .env — repo is public. Keys must be in GitHub Secrets.
+          rsync -a --exclude='cache/' --exclude='__pycache__/' --exclude='*.tmp' --exclude='*.lock' --exclude='.env' \
+            "$HERMES_HOME/" "$STAGE/.hermes/" 2>/dev/null || true
+          if [ -f "$HERMES_HOME/.env" ]; then
+            grep -E '^[A-Z0-9_]+=' "$HERMES_HOME/.env" | cut -d= -f1 > "$STAGE/.hermes/KEY_NAMES.txt" || true
+          fi
+          cd "$STAGE"
+          git init -q
+          git config user.email "hermes-lifetime[bot]@users.noreply.github.com"
+          git config user.name "Hermes Lifetime Bot"
+          git checkout -b hermes-state
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+          else
+            git commit -m "state snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ) run=${{ github.run_id }}"
+            git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+            git push -f origin hermes-state
+            echo "Pushed hermes-state branch successfully"
           fi
 
-      - name: Save Hermes state (cache)
+      - name: Save cache (secondary)
         if: always()
         uses: actions/cache/save@v4
         with:
@@ -79,22 +148,12 @@ jobs:
             hermes-backup
           key: hermes-state-${{ github.repository }}-${{ github.run_id }}
 
-      - name: Upload backup artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hermes-backup-${{ github.run_id }}
-          path: hermes-backup/
-          retention-days: 14
-          if-no-files-found: ignore
-
-      - name: Trigger next session (lifetime loop)
+      - name: Trigger next session
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Queuing next Hermes Lifetime session..."
-          sleep 10
+          echo "Queuing next session in 30s..."
+          sleep 30
           gh workflow run "Hermes Lifetime" --repo "${{ github.repository }}" || \
           gh workflow run hermes.yml --repo "${{ github.repository }}" || true
-          echo "Next session has been triggered."
