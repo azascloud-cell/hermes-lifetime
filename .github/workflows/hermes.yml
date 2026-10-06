@@ -19,81 +19,35 @@ jobs:
     timeout-minutes: 350
 
     env:
-      STATE_REPO: azascloud-cell/model-hermes
-      STATE_BRANCH: main
+      STATE_REPO: ${{ github.repository }}
+      STATE_BRANCH: hermes-state
 
     steps:
-      - name: Checkout public runner repo
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Restore state from private repo (model-hermes)
+      - name: Restore state (branch hermes-state)
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           STATE_REPO_TOKEN: ${{ secrets.STATE_REPO_TOKEN }}
         run: |
-          set -e
-          mkdir -p "$HOME/.hermes" hermes-backup
+          chmod +x scripts/*.sh scripts/*.py 2>/dev/null || true
+          export HERMES_HOME="$HOME/.hermes"
+          bash scripts/restore-state.sh
 
-          if [ -z "${STATE_REPO_TOKEN:-}" ]; then
-            echo "ERROR: STATE_REPO_TOKEN secret is EMPTY"
-            echo "Add PAT (classic, scope repo) as secret STATE_REPO_TOKEN on hermes-lifetime"
-          else
-            echo "STATE_REPO_TOKEN is set (len=${#STATE_REPO_TOKEN})"
-            STAGE="${{ github.workspace }}/state-pull"
-            rm -rf "$STAGE"
-            set +e
-            git clone --depth 1 --branch "${STATE_BRANCH}" \
-              "https://x-access-token:${STATE_REPO_TOKEN}@github.com/${STATE_REPO}.git" \
-              "$STAGE" 2> /tmp/clone-err.txt
-            CLONE_RC=$?
-            set -e
-            if [ $CLONE_RC -ne 0 ]; then
-              echo "Clone failed:"; cat /tmp/clone-err.txt || true
-              git clone --depth 1 \
-                "https://x-access-token:${STATE_REPO_TOKEN}@github.com/${STATE_REPO}.git" \
-                "$STAGE" 2>> /tmp/clone-err.txt || true
-            fi
-
-            if [ -d "$STAGE/.git" ]; then
-              if [ -d "$STAGE/.hermes" ]; then
-                rsync -a "$STAGE/.hermes/" "$HOME/.hermes/" || true
-                echo "Restored .hermes/ from private repo"
-              else
-                echo "Private repo has no .hermes/ yet (first successful push will create it)"
-              fi
-              ls -la "$HOME/.hermes" || true
-              ls -la "$HOME/.hermes/memories" 2>/dev/null || true
-              if [ -f "$HOME/.hermes/.env" ]; then
-                echo "--- .env keys ---"
-                grep -E '^[A-Z0-9_]+=' "$HOME/.hermes/.env" | cut -d= -f1 | tr '\n' ' '; echo
-              else
-                echo "--- .env missing ---"
-              fi
-              [ -s "$HOME/.hermes/SOUL.md" ] && head -5 "$HOME/.hermes/SOUL.md" || echo "NO SOUL.md"
-              [ -f "$HOME/.hermes/state.db" ] && ls -lh "$HOME/.hermes/state.db" || echo "NO state.db"
-            else
-              echo "Clone produced no repo — check STATE_REPO_TOKEN permissions"
-            fi
-          fi
-
-          if [ ! -s "$HOME/.hermes/SOUL.md" ] && [ -f SOUL.md ]; then
-            cp SOUL.md "$HOME/.hermes/SOUL.md"
-            echo "Seeded SOUL.md from public repo"
-          fi
-
-      - name: Cache fallback restore
+      - name: Cache fallback
         uses: actions/cache/restore@v4
         with:
           path: |
             ~/.hermes
             hermes-backup
-          key: hermes-state-${{ github.repository }}-${{ github.run_id }}
+          key: hermes-state-${{ github.run_id }}
           restore-keys: |
-            hermes-state-${{ github.repository }}-
             hermes-state-
 
-      - name: Bootstrap & Run Session
+      - name: Run session
         env:
           XKIRO_API_KEY: ${{ secrets.XKIRO_API_KEY }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
@@ -114,9 +68,9 @@ jobs:
           OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL }}
           DASHBOARD_PORT: "9119"
           BACKUP_ROOT: ${{ github.workspace }}/hermes-backup
-          STATE_REPO_TOKEN: ${{ secrets.STATE_REPO_TOKEN }}
-          STATE_REPO: azascloud-cell/model-hermes
-          STATE_BRANCH: main
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATE_REPO: ${{ github.repository }}
+          STATE_BRANCH: hermes-state
         run: |
           chmod +x scripts/*.sh scripts/*.py 2>/dev/null || true
           mkdir -p hermes-backup "$HOME/.hermes"
@@ -124,22 +78,18 @@ jobs:
           export BACKUP_ROOT="${{ github.workspace }}/hermes-backup"
           python3 scripts/merge_providers.py || true
 
-          # Mid-session push to private repo every 30 minutes (survives cancel/timeout)
-          if [ -n "${STATE_REPO_TOKEN:-}" ]; then
-            (
-              while true; do
-                sleep 1800
-                echo "[mid-session] pushing state to private repo..."
-                bash scripts/push-state.sh || echo "[mid-session] push failed"
-              done
-            ) &
-            echo $! > /tmp/mid-push.pid
-            echo "Mid-session push PID=$(cat /tmp/mid-push.pid)"
-          fi
+          # Mid-session save every 20 min to hermes-state branch
+          (
+            while true; do
+              sleep 1200
+              echo "[mid] saving state to branch..."
+              bash scripts/push-state.sh || echo "[mid] push failed"
+            done
+          ) & echo $! > /tmp/mid-push.pid
 
           ./scripts/run-session.sh
 
-      - name: Final backup to disk
+      - name: Final local backup
         if: always()
         run: |
           export HERMES_HOME="$HOME/.hermes"
@@ -147,31 +97,29 @@ jobs:
           bash scripts/persist-hermes.sh backup || true
           bash scripts/persist-hermes.sh status || true
 
-      - name: Push full state to private repo (incl .env)
+      - name: Push state to hermes-state branch
         if: always()
         env:
-          STATE_REPO_TOKEN: ${{ secrets.STATE_REPO_TOKEN }}
-          STATE_REPO: azascloud-cell/model-hermes
-          STATE_BRANCH: main
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATE_REPO: ${{ github.repository }}
+          STATE_BRANCH: hermes-state
         run: |
           export HERMES_HOME="$HOME/.hermes"
           bash scripts/push-state.sh
 
-      - name: Save cache (secondary)
+      - name: Save cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.hermes
             hermes-backup
-          key: hermes-state-${{ github.repository }}-${{ github.run_id }}
+          key: hermes-state-${{ github.run_id }}
 
-      - name: Trigger next session
+      - name: Next session
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Queuing next session in 30s..."
-          sleep 30
-          gh workflow run "Hermes Lifetime" --repo "${{ github.repository }}" || \
-          gh workflow run hermes.yml --repo "${{ github.repository }}" || true
+          sleep 20
+          gh workflow run "Hermes Lifetime" --repo "${{ github.repository }}" || true

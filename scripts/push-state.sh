@@ -1,136 +1,104 @@
 #!/usr/bin/env bash
-# Push ONLY essential Hermes state to private STATE_REPO
-# Do NOT push tools/, hermes-agent install, caches (too large → push fails)
+# Single-repo state push → branch hermes-state on THIS repo
+# Essential files only. Never commits .env (use GitHub Secrets).
 set -euo pipefail
 
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-STATE_REPO="${STATE_REPO:-azascloud-cell/model-hermes}"
-STATE_BRANCH="${STATE_BRANCH:-main}"
-STATE_REPO_TOKEN="${STATE_REPO_TOKEN:-}"
+# Default: same repo that is running the workflow
+STATE_REPO="${STATE_REPO:-${GITHUB_REPOSITORY:-azascloud-cell/hermes-lifetime}}"
+STATE_BRANCH="${STATE_BRANCH:-hermes-state}"
+# Prefer dedicated token, else GITHUB_TOKEN (enough for same public repo)
+TOKEN="${STATE_REPO_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
 
-if [ -z "$STATE_REPO_TOKEN" ]; then
-  echo "ERROR: STATE_REPO_TOKEN empty — skip push"
+if [ -z "$TOKEN" ]; then
+  echo "ERROR: no token (GITHUB_TOKEN / STATE_REPO_TOKEN)"
   exit 0
 fi
 
 if [ ! -d "$HERMES_HOME" ]; then
-  echo "ERROR: HERMES_HOME missing: $HERMES_HOME"
+  echo "ERROR: no HERMES_HOME at $HERMES_HOME"
   exit 0
 fi
 
-STAGE="${RUNNER_TEMP:-/tmp}/hermes-state-push-$$"
+STAGE="${RUNNER_TEMP:-/tmp}/hermes-state-$$"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
+cd "$STAGE"
 
-echo "Pushing ESSENTIAL state only → ${STATE_REPO} (${STATE_BRANCH})"
-echo "HERMES_HOME=$HERMES_HOME"
+echo "=== Push state → ${STATE_REPO}@${STATE_BRANCH} ==="
 
-set +e
-git clone --depth 1 --branch "$STATE_BRANCH" \
-  "https://x-access-token:${STATE_REPO_TOKEN}@github.com/${STATE_REPO}.git" \
-  "$STAGE" 2>/tmp/push-clone.err
-RC=$?
-set -e
+# Init orphan branch content
+git init -q
+git config user.email "hermes-bot@users.noreply.github.com"
+git config user.name "Hermes Lifetime"
+git checkout -b "$STATE_BRANCH"
 
-if [ $RC -ne 0 ] || [ ! -d "$STAGE/.git" ]; then
-  echo "Clone failed, init fresh:"
-  cat /tmp/push-clone.err 2>/dev/null || true
-  rm -rf "$STAGE"
-  mkdir -p "$STAGE"
-  cd "$STAGE"
-  git init -b "$STATE_BRANCH"
-  git remote add origin "https://x-access-token:${STATE_REPO_TOKEN}@github.com/${STATE_REPO}.git"
-else
-  cd "$STAGE"
-fi
+mkdir -p .hermes/memories .hermes/skills
 
-git config user.email "hermes-lifetime[bot]@users.noreply.github.com"
-git config user.name "Hermes Lifetime Bot"
-
-# Wipe previous staged content layout
-rm -rf .hermes
-mkdir -p .hermes/memories .hermes/skills .hermes/state-snapshots
-
-# --- ONLY what we need to restore identity + session + keys ---
 copy_if() {
-  local src="$1" dst="$2"
-  if [ -e "$src" ]; then
-    mkdir -p "$(dirname "$dst")"
-    cp -a "$src" "$dst"
-    echo "  + $src"
-  fi
+  [ -e "$1" ] || return 0
+  mkdir -p "$(dirname "$2")"
+  cp -a "$1" "$2"
+  echo "  + $1"
 }
 
-copy_if "$HERMES_HOME/SOUL.md"        .hermes/SOUL.md
-copy_if "$HERMES_HOME/config.yaml"    .hermes/config.yaml
-copy_if "$HERMES_HOME/.env"           .hermes/.env
-copy_if "$HERMES_HOME/state.db"       .hermes/state.db
-copy_if "$HERMES_HOME/state.db-wal"   .hermes/state.db-wal
-copy_if "$HERMES_HOME/state.db-shm"   .hermes/state.db-shm
-
-# memories (MEMORY.md, USER.md, etc.)
-if [ -d "$HERMES_HOME/memories" ]; then
-  rsync -a "$HERMES_HOME/memories/" .hermes/memories/
-  echo "  + memories/ ($(find .hermes/memories -type f | wc -l) files)"
-fi
-
-# user skills only (not whole tools tree)
-if [ -d "$HERMES_HOME/skills" ]; then
-  rsync -a \
-    --exclude='*/node_modules/' \
-    --exclude='*/__pycache__/' \
-    --exclude='*/.git/' \
-    "$HERMES_HOME/skills/" .hermes/skills/ 2>/dev/null || true
-  echo "  + skills/"
-fi
-
-# sessions json if present
+copy_if "$HERMES_HOME/SOUL.md"      .hermes/SOUL.md
+copy_if "$HERMES_HOME/config.yaml"  .hermes/config.yaml
+copy_if "$HERMES_HOME/state.db"     .hermes/state.db
+copy_if "$HERMES_HOME/state.db-wal" .hermes/state.db-wal
+copy_if "$HERMES_HOME/state.db-shm" .hermes/state.db-shm
 copy_if "$HERMES_HOME/sessions.json" .hermes/sessions.json
 
-# Explicitly DO NOT copy:
-# tools/  hermes-agent/  cache/  node/  nvm/  large installs
+if [ -d "$HERMES_HOME/memories" ]; then
+  rsync -a "$HERMES_HOME/memories/" .hermes/memories/
+  echo "  + memories/"
+fi
 
-cat > README.md << 'EOF'
-# Hermes private state store
+# Optional small skills only
+if [ -d "$HERMES_HOME/skills" ]; then
+  rsync -a --max-size=500k \
+    --exclude='node_modules/' --exclude='__pycache__/' --exclude='.git/' \
+    "$HERMES_HOME/skills/" .hermes/skills/ 2>/dev/null || true
+fi
 
-Essential state only (SOUL, memories, state.db, config, .env).
-Updated by hermes-lifetime public runner. Keep private.
+# NEVER copy .env to public branch
+cat > README.md << EOF
+# hermes-state branch
+
+Auto snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)
+Contains SOUL, memories, state.db, config — not .env (keys in Actions Secrets).
 EOF
 
-# Safety: refuse if somehow huge
-SIZE_KB=$(du -sk .hermes 2>/dev/null | cut -f1)
-echo "State payload: ${SIZE_KB} KB"
-if [ "${SIZE_KB:-0}" -gt 150000 ]; then
-  echo "ERROR: payload > 150MB — abort push (something wrong included)"
-  du -sh .hermes/* 2>/dev/null | sort -h | tail -20
+SIZE_KB=$(du -sk .hermes 2>/dev/null | cut -f1 || echo 0)
+echo "Payload: ${SIZE_KB} KB"
+if [ "${SIZE_KB:-0}" -gt 80000 ]; then
+  echo "ERROR: payload too large"
+  du -sh .hermes/* 2>/dev/null | sort -h | tail -15
   exit 1
 fi
 
 git add -A
-
 if git diff --cached --quiet; then
-  echo "Nothing new to commit"
+  echo "Nothing to commit"
   exit 0
 fi
 
 git commit -m "state $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+git remote add origin "https://x-access-token:${TOKEN}@github.com/${STATE_REPO}.git"
+
 set +e
-git push -u origin "HEAD:${STATE_BRANCH}" --force 2>/tmp/push.err
-PUSH_RC=$?
+git push -u origin "$STATE_BRANCH" --force 2>/tmp/push.err
+RC=$?
 set -e
 
-if [ $PUSH_RC -ne 0 ]; then
+if [ $RC -ne 0 ]; then
   echo "PUSH FAILED:"
-  cat /tmp/push.err || true
+  cat /tmp/push.err
   exit 1
 fi
 
-echo "OK: pushed to ${STATE_REPO}@${STATE_BRANCH}"
-if [ -f .hermes/.env ]; then
-  echo "Saved .env keys:"
-  grep -E '^[A-Z0-9_]+=' .hermes/.env | cut -d= -f1
-fi
+echo "OK: ${STATE_REPO}@${STATE_BRANCH}"
 [ -f .hermes/state.db ] && ls -lh .hermes/state.db
-[ -f .hermes/SOUL.md ] && echo "SOUL.md: $(wc -c < .hermes/SOUL.md) bytes"
-[ -d .hermes/memories ] && ls -la .hermes/memories/
+[ -f .hermes/SOUL.md ] && echo "SOUL: $(wc -c < .hermes/SOUL.md) bytes"
+ls -la .hermes/memories/ 2>/dev/null || true
