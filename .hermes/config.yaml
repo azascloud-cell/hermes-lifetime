@@ -1,0 +1,67 @@
+model:
+  providers:
+    ollama-cloud:
+      base_url: https://ollama.com/v1
+      api_key_env: OLLAMA_API_KEY
+    google:
+      base_url: https://generativelanguage.googleapis.com/v1beta
+      api_key_env: GOOGLE_API_KEY
+    gemini:
+      base_url: https://generativelanguage.googleapis.com/v1beta
+      api_key_env: GEMINI_API_KEY
+    xkiro:
+      base_url: https://xkiro.com/v1
+      api_key_env: XKIRO_API_KEY
+      models:
+      - id: qwen/qwen3.8-omni-flash:free
+        alias: xkiro
+    groq:
+      base_url: https://api.groq.com/openai/v1
+      api_key_env: GROQ_API_KEY
+      models:
+      - id: openai/gpt-oss-120b
+        alias: groq-oss
+      - id: openai/gpt-oss-20b
+        alias: groq-oss-20b
+      - id: qwen/qwen3.8-27b
+        alias: groq-qwen
+    aisub-minimax:
+      base_url: http://66.135.18.180:8080/v1
+      api_key_env: AISUBSCRIPTION_API_KEY
+      models:
+      - id: MiniMaxAI/MiniMax-M2.7
+        alias: aisub-minimax
+    aisub-qwen:
+      base_url: http://43.179.177.126:8000/v1
+      api_key_env: AISUBSCRIPTION_API_KEY
+      models:
+      - id: Qwen3.5-122B-A10B
+        alias: aisub-qwen
+    aisub-gemma:
+      base_url: http://36.137.226.29:8000/v1
+      api_key_env: AISUBSCRIPTION_API_KEY
+      models:
+      - id: gemma-4-31b-it
+        alias: aisub-gemma
+    miarouter:
+      base_url: https://miarouter.online/v1
+      api_key_env: MIAROUTER_API_KEY
+      models:
+      - id: claude-fable-5-1
+        alias: claude-fable-5-1
+      - id: claude-opus-5
+        alias: claude-opus-5
+      - id: claude-sonnet-5
+        alias: claude-sonnet-5
+      - id: gpt-6-astra
+        alias: gpt-6-astra
+      - id: kimi-k3
+        alias: kimi-k3
+  default: gemma4:31b
+  provider: ollama-cloud
+  api_mode: chat_completions
+_config_version: 50
+onboarding:
+  seen:
+    profile_build_offered: true
+    busy_input_prompt: true
