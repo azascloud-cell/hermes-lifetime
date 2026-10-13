@@ -49,6 +49,7 @@ jobs:
 
       - name: Run session
         env:
+          NINEROUTER_API_KEY: ${{ secrets.NINEROUTER_API_KEY }}
           XKIRO_API_KEY: ${{ secrets.XKIRO_API_KEY }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -78,7 +79,6 @@ jobs:
           export BACKUP_ROOT="${{ github.workspace }}/hermes-backup"
           python3 scripts/merge_providers.py || true
 
-          # Mid-session save every 20 min to hermes-state branch
           (
             while true; do
               sleep 1200
