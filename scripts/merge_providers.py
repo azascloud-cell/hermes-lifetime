@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Register 9router as primary provider + optional fallbacks."""
+"""Force 9router as primary with VALID model ids from the live /v1/models list."""
 import os, sys, pathlib
 try:
     import yaml
@@ -12,10 +12,19 @@ HERMES_HOME = pathlib.Path(os.environ.get("HERMES_HOME", pathlib.Path.home() / "
 LIVE = HERMES_HOME / "config.yaml"
 
 PROVIDERS = {
-    # Primary: 9router — models managed on 9router dashboard (no key-hopping)
     "9router": {
         "base_url": "http://38.49.213.154:2141/v1",
         "api_key_env": "NINEROUTER_API_KEY",
+        "models": [
+            {"id": "nero", "alias": "nero"},
+            {"id": "agnes-2.5-flash/muse-spark-1.3-contributor-free", "alias": "muse-free"},
+            {"id": "agnes-2.5-flash/claude-sonnet-5", "alias": "claude-sonnet-5"},
+            {"id": "agnes-2.5-flash/claude-opus-5", "alias": "claude-opus-5"},
+            {"id": "agnes-2.5-flash/gpt-6-astra", "alias": "gpt-6-astra"},
+            {"id": "agnes-2.5-flash/kimi-k3", "alias": "kimi-k3"},
+            {"id": "agnes-2.5-flash/gemini-3.8-flash-high", "alias": "gemini-flash"},
+            {"id": "agnes-2.5-flash/deepseek-v4.1-flash", "alias": "deepseek-flash"},
+        ],
     },
     "ollama-cloud": {
         "base_url": "https://ollama.com/v1",
@@ -32,30 +41,24 @@ PROVIDERS = {
 }
 
 def main():
+    data = {}
     if LIVE.exists():
         try:
             data = yaml.safe_load(LIVE.read_text()) or {}
         except Exception:
             data = {}
-    else:
-        data = {}
 
     model = data.setdefault("model", {})
-    # Keep any existing providers user added, then force our map
-    existing = model.get("providers") or {}
-    if not isinstance(existing, dict):
-        existing = {}
-    merged = {**existing, **PROVIDERS}
-    # Force 9router base_url always
-    merged["9router"] = PROVIDERS["9router"]
-    model["providers"] = merged
+    existing = model.get("providers") if isinstance(model.get("providers"), dict) else {}
+    model["providers"] = {**existing, **PROVIDERS}
+    model["providers"]["9router"] = PROVIDERS["9router"]  # force
 
-    # Default to 9router
     model["provider"] = "9router"
-    model.setdefault("api_mode", "chat_completions")
-    # Default model id — user can change via /model or 9router dashboard routing
-    if not model.get("default") or model.get("default") in ("gemma4:31b", "gpt-oss"):
-        model["default"] = "gpt-4o-mini"  # placeholder; 9router routes by its dashboard
+    # NEVER leave gpt-4o-mini — it does not exist on 9router
+    bad = {"gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo", "gemma4:31b"}
+    if not model.get("default") or model.get("default") in bad:
+        model["default"] = "nero"
+    model["api_mode"] = "chat_completions"
 
     data.setdefault("memory", {})
     data["memory"]["memory_enabled"] = True
@@ -63,10 +66,8 @@ def main():
 
     LIVE.parent.mkdir(parents=True, exist_ok=True)
     LIVE.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False))
-
-    print("Providers:", list(model["providers"].keys()))
-    print("Default provider:", model.get("provider"))
-    print("9router base_url:", model["providers"]["9router"]["base_url"])
+    print("provider=9router default=", model["default"])
+    print("models:", [m["id"] for m in PROVIDERS["9router"]["models"]])
     print("DONE")
 
 if __name__ == "__main__":
