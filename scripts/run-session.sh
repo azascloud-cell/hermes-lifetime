@@ -46,7 +46,7 @@ install_hermes() {
 }
 
 write_env() {
-  log "Merging secrets into $HERMES_HOME/.env (dashboard keys preserved)..."
+  log "Merging secrets into $HERMES_HOME/.env ..."
   ENV_FILE="$HERMES_HOME/.env"
   touch "$ENV_FILE"
   chmod 600 "$ENV_FILE"
@@ -65,6 +65,7 @@ write_env() {
       echo "${key}=${val}" >> "$TMP_MERGE"
     fi
   }
+  upsert NINEROUTER_API_KEY "${NINEROUTER_API_KEY:-}"
   upsert XKIRO_API_KEY "${XKIRO_API_KEY:-}"
   upsert OLLAMA_API_KEY "${OLLAMA_API_KEY:-}"
   upsert GROQ_API_KEY "${GROQ_API_KEY:-}"
@@ -105,7 +106,7 @@ write_env() {
   rm -f "$TMP_MERGE"
   chmod 600 "$ENV_FILE"
   set -a; source "$ENV_FILE" 2>/dev/null || true; set +a
-  for k in XKIRO_API_KEY GROQ_API_KEY AISUBSCRIPTION_API_KEY MIAROUTER_API_KEY OLLAMA_API_KEY GOOGLE_API_KEY GEMINI_API_KEY TELEGRAM_BOT_TOKEN; do
+  for k in NINEROUTER_API_KEY OLLAMA_API_KEY TELEGRAM_BOT_TOKEN GOOGLE_API_KEY GEMINI_API_KEY; do
     v="${!k:-}"
     if [ -n "$v" ]; then log "KEY $k = SET (len=${#v})"; else log "KEY $k = EMPTY"; fi
   done
@@ -117,19 +118,16 @@ write_config() {
     cp -f config.yaml "$HERMES_HOME/config.yaml"
     log "config.yaml installed (first time)"
   elif [ -f "$HERMES_HOME/config.yaml" ]; then
-    log "config.yaml present — merging providers (base_url fix)"
+    log "config.yaml present — merging providers"
   else
     mkdir -p "$HERMES_HOME"
     echo "model: {}" > "$HERMES_HOME/config.yaml"
-    log "created minimal config.yaml"
   fi
   MERGE_SCRIPT=""
   if [ -f "$SCRIPT_DIR/merge_providers.py" ]; then MERGE_SCRIPT="$SCRIPT_DIR/merge_providers.py"
   elif [ -f "scripts/merge_providers.py" ]; then MERGE_SCRIPT="scripts/merge_providers.py"; fi
   if [ -n "$MERGE_SCRIPT" ]; then
-    python3 "$MERGE_SCRIPT" 2>&1 | while IFS= read -r line; do log "merge: $line"; done || log "WARN: merge_providers failed"
-  else
-    log "WARN: merge_providers.py not found"
+    python3 "$MERGE_SCRIPT" 2>&1 | while IFS= read -r line; do log "merge: $line"; done || log "WARN: merge failed"
   fi
 }
 
