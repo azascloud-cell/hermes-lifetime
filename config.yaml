@@ -1,37 +1,18 @@
 model:
   default: nero
-  provider: 9router
+  provider: custom
+  base_url: http://38.49.213.154:2141/v1
+  key_env: NINEROUTER_API_KEY
   api_mode: chat_completions
-  providers:
-    9router:
-      base_url: http://38.49.213.154:2141/v1
-      api_key_env: NINEROUTER_API_KEY
-      models:
-        - id: nero
-          alias: nero
-        - id: agnes-2.5-flash/muse-spark-1.3-contributor-free
-          alias: muse-free
-        - id: agnes-2.5-flash/claude-sonnet-5
-          alias: claude-sonnet-5
-        - id: agnes-2.5-flash/claude-opus-5
-          alias: claude-opus-5
-        - id: agnes-2.5-flash/gpt-6-astra
-          alias: gpt-6-astra
-        - id: agnes-2.5-flash/kimi-k3
-          alias: kimi-k3
-        - id: agnes-2.5-flash/gemini-3.8-flash-high
-          alias: gemini-flash
-        - id: agnes-2.5-flash/deepseek-v4.1-flash
-          alias: deepseek-flash
-    ollama-cloud:
-      base_url: https://ollama.com/v1
-      api_key_env: OLLAMA_API_KEY
-    google:
-      base_url: https://generativelanguage.googleapis.com/v1beta
-      api_key_env: GOOGLE_API_KEY
-    gemini:
-      base_url: https://generativelanguage.googleapis.com/v1beta
-      api_key_env: GEMINI_API_KEY
+  context_length: 128000
+
+# Named custom provider (Hermes v0.21+)
+providers:
+  ninerouter:
+    api: http://38.49.213.154:2141/v1
+    key_env: NINEROUTER_API_KEY
+    transport: chat_completions
+
 memory:
   memory_enabled: true
   user_profile_enabled: true

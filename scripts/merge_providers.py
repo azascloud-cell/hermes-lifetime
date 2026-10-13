@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Always force 9router + valid models. Stale restored config must not win."""
+"""Force 9router via Hermes official custom endpoint format.
+
+NOT model.providers.9router (unknown to Hermes runtime).
+Use: model.provider=custom + base_url + key_env
+Plus top-level providers.ninerouter for named custom.
+"""
 import os, sys, pathlib
 try:
     import yaml
@@ -11,21 +16,8 @@ except ImportError:
 HERMES_HOME = pathlib.Path(os.environ.get("HERMES_HOME", pathlib.Path.home() / ".hermes"))
 LIVE = HERMES_HOME / "config.yaml"
 
-NINEROUTER = {
-    "base_url": "http://38.49.213.154:2141/v1",
-    "api_key_env": "NINEROUTER_API_KEY",
-    "models": [
-        {"id": "nero", "alias": "nero"},
-        {"id": "agnes-2.5-flash/muse-spark-1.3-contributor-free", "alias": "muse-free"},
-        {"id": "agnes-2.5-flash/claude-sonnet-5", "alias": "claude-sonnet-5"},
-        {"id": "agnes-2.5-flash/claude-opus-5", "alias": "claude-opus-5"},
-        {"id": "agnes-2.5-flash/gpt-6-astra", "alias": "gpt-6-astra"},
-        {"id": "agnes-2.5-flash/kimi-k3", "alias": "kimi-k3"},
-        {"id": "agnes-2.5-flash/gemini-3.8-flash-high", "alias": "gemini-flash"},
-        {"id": "agnes-2.5-flash/deepseek-v4.1-flash", "alias": "deepseek-flash"},
-        {"id": "agnes-2.5-flash/nemotron-3-super-free", "alias": "nemotron-free"},
-    ],
-}
+BASE = "http://38.49.213.154:2141/v1"
+KEY_ENV = "NINEROUTER_API_KEY"
 
 def main():
     data = {}
@@ -35,16 +27,29 @@ def main():
         except Exception:
             data = {}
 
+    # Primary: official custom endpoint
     model = data.setdefault("model", {})
-    providers = model.get("providers") if isinstance(model.get("providers"), dict) else {}
-    providers["9router"] = NINEROUTER
-    providers.setdefault("ollama-cloud", {"base_url": "https://ollama.com/v1", "api_key_env": "OLLAMA_API_KEY"})
-    providers.setdefault("google", {"base_url": "https://generativelanguage.googleapis.com/v1beta", "api_key_env": "GOOGLE_API_KEY"})
-    providers.setdefault("gemini", {"base_url": "https://generativelanguage.googleapis.com/v1beta", "api_key_env": "GEMINI_API_KEY"})
-    model["providers"] = providers
-    model["provider"] = "9router"
     model["default"] = "nero"
+    model["provider"] = "custom"
+    model["base_url"] = BASE
+    model["key_env"] = KEY_ENV
     model["api_mode"] = "chat_completions"
+    model["context_length"] = 128000
+
+    # Strip broken model.providers.9router if present (causes Unknown provider)
+    if isinstance(model.get("providers"), dict):
+        model["providers"].pop("9router", None)
+
+    # Named custom under top-level providers: (docs format)
+    providers = data.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        providers = {}
+        data["providers"] = providers
+    providers["ninerouter"] = {
+        "api": BASE,
+        "key_env": KEY_ENV,
+        "transport": "chat_completions",
+    }
 
     data.setdefault("memory", {})
     data["memory"]["memory_enabled"] = True
@@ -52,8 +57,8 @@ def main():
 
     LIVE.parent.mkdir(parents=True, exist_ok=True)
     LIVE.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False))
-    print("FORCED provider=9router default=nero")
-    print("models:", [m["id"] for m in NINEROUTER["models"]])
+    print("FORCED provider=custom base_url=%s key_env=%s default=nero" % (BASE, KEY_ENV))
+    print("named providers.ninerouter registered")
     print("DONE")
 
 if __name__ == "__main__":
