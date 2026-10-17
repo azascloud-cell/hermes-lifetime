@@ -1,0 +1,1 @@
+{"id": "c07eec3cd648", "ts": "2026-10-07T09:26:48.604116+00:00", "actor": "curator", "action": "create", "skill": "presentation-coaching", "evidence": {"session_id": "20261007_011028_72d42860"}, "before": [], "after": [{"path": "/home/runner/.hermes/skills/productivity/presentation-coaching/SKILL.md", "sha256": "90f887092c3136f85cefc0728e19f26fe73ec9553706d015c643e83a61db42e1"}]}
