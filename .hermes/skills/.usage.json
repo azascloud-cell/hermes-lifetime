@@ -1,0 +1,18 @@
+{
+  "presentation-coaching": {
+    "archived_at": "2026-11-07T13:13:03.940350+00:00",
+    "created_at": "2026-10-07T09:26:48.604413+00:00",
+    "created_by": "agent",
+    "first_seen_at": null,
+    "last_patched_at": null,
+    "last_reused_patch_generation": 0,
+    "last_used_at": null,
+    "last_viewed_at": null,
+    "patch_count": 0,
+    "patch_generation": 0,
+    "pinned": false,
+    "state": "archived",
+    "use_count": 0,
+    "view_count": 0
+  }
+}
