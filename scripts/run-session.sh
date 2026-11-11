@@ -65,6 +65,7 @@ write_env() {
       echo "${key}=${val}" >> "$TMP_MERGE"
     fi
   }
+  upsert FREE_AI_API_KEY "${FREE_AI_API_KEY:-}"
   upsert NINEROUTER_API_KEY "${NINEROUTER_API_KEY:-}"
   upsert XKIRO_API_KEY "${XKIRO_API_KEY:-}"
   upsert OLLAMA_API_KEY "${OLLAMA_API_KEY:-}"
@@ -106,7 +107,7 @@ write_env() {
   rm -f "$TMP_MERGE"
   chmod 600 "$ENV_FILE"
   set -a; source "$ENV_FILE" 2>/dev/null || true; set +a
-  for k in NINEROUTER_API_KEY OLLAMA_API_KEY TELEGRAM_BOT_TOKEN GOOGLE_API_KEY GEMINI_API_KEY; do
+  for k in FREE_AI_API_KEY OLLAMA_API_KEY TELEGRAM_BOT_TOKEN GOOGLE_API_KEY GEMINI_API_KEY; do
     v="${!k:-}"
     if [ -n "$v" ]; then log "KEY $k = SET (len=${#v})"; else log "KEY $k = EMPTY"; fi
   done

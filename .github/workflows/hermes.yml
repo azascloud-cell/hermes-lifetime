@@ -49,6 +49,7 @@ jobs:
 
       - name: Run session
         env:
+          FREE_AI_API_KEY: ${{ secrets.FREE_AI_API_KEY }}
           NINEROUTER_API_KEY: ${{ secrets.NINEROUTER_API_KEY }}
           XKIRO_API_KEY: ${{ secrets.XKIRO_API_KEY }}
           OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}

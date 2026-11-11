@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Force 9router via Hermes official custom endpoint format.
-
-NOT model.providers.9router (unknown to Hermes runtime).
-Use: model.provider=custom + base_url + key_env
-Plus top-level providers.ninerouter for named custom.
-"""
+"""Force Free.ai as default custom endpoint. Removes ninerouter/9router."""
 import os, sys, pathlib
 try:
     import yaml
@@ -16,8 +11,9 @@ except ImportError:
 HERMES_HOME = pathlib.Path(os.environ.get("HERMES_HOME", pathlib.Path.home() / ".hermes"))
 LIVE = HERMES_HOME / "config.yaml"
 
-BASE = "http://38.49.213.154:2141/v1"
-KEY_ENV = "NINEROUTER_API_KEY"
+BASE = "https://api.free.ai/v1"
+KEY_ENV = "FREE_AI_API_KEY"
+DEFAULT_MODEL = "qwen7b"
 
 def main():
     data = {}
@@ -27,25 +23,26 @@ def main():
         except Exception:
             data = {}
 
-    # Primary: official custom endpoint
     model = data.setdefault("model", {})
-    model["default"] = "nero"
+    model["default"] = DEFAULT_MODEL
     model["provider"] = "custom"
     model["base_url"] = BASE
     model["key_env"] = KEY_ENV
     model["api_mode"] = "chat_completions"
     model["context_length"] = 128000
 
-    # Strip broken model.providers.9router if present (causes Unknown provider)
+    # Remove old ninerouter / 9router entries
     if isinstance(model.get("providers"), dict):
         model["providers"].pop("9router", None)
+        model["providers"].pop("ninerouter", None)
 
-    # Named custom under top-level providers: (docs format)
     providers = data.setdefault("providers", {})
     if not isinstance(providers, dict):
         providers = {}
         data["providers"] = providers
-    providers["ninerouter"] = {
+    providers.pop("ninerouter", None)
+    providers.pop("9router", None)
+    providers["freeai"] = {
         "api": BASE,
         "key_env": KEY_ENV,
         "transport": "chat_completions",
@@ -57,8 +54,8 @@ def main():
 
     LIVE.parent.mkdir(parents=True, exist_ok=True)
     LIVE.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False))
-    print("FORCED provider=custom base_url=%s key_env=%s default=nero" % (BASE, KEY_ENV))
-    print("named providers.ninerouter registered")
+    print("FORCED provider=custom base_url=%s key_env=%s default=%s" % (BASE, KEY_ENV, DEFAULT_MODEL))
+    print("ninerouter removed; freeai registered")
     print("DONE")
 
 if __name__ == "__main__":
